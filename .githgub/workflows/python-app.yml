@@ -1,0 +1,66 @@
+name: Compile executable file
+
+on:
+  push:
+    branches: [ dev ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+    - name: Get the latest release tag and increment
+      id: get_version
+      run: |
+        python -c "
+          import requests
+          response = requests.get('https://api.github.com/repos/liuyunfz/chaoxing_tool/releases/latest')
+          latest_tag = response.json()['tag_name'][1:]
+          version_parts = list(map(int, latest_tag.split('.')))
+          if len(version_parts) == 2:
+              version_parts.append(0)
+          elif len(version_parts) == 3:
+              version_parts[2] += 1
+          new_tag = '.'.join(map(str, version_parts))
+          print(f'::set-output name=VERSION::{new_tag}')
+        "
+    - name: Use docker to compile
+      run: |
+        docker run -v $GITHUB_WORKSPACE:/src cdrx/pyinstaller-windows:latest 'pyinstaller -D --clean -y --dist ./chaoxing_tool --workpath /tmp ./main.py'
+    - name: Move some necessary files
+      run: |
+        mv ${{ github.workspace }}/functions ${{ github.workspace }}/chaoxing_tool/
+        mv ${{ github.workspace }}/classis ${{ github.workspace }}/chaoxing_tool/
+        mv ${{ github.workspace }}/config.yml ${{ github.workspace }}/chaoxing_tool/
+    - name: Zip the directory
+      run: |
+        zip -r ${{ github.workspace }}/chaoxing_tool.zip ${{ github.workspace }}/chaoxing_tool
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        release_name: ${{ steps.get_version.outputs.VERSION }} Beta Release
+        draft: false
+        prerelease: true
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ github.workspace }}/chaoxing_tool.zip
+        asset_name: chaoxing_tool.zip
+        asset_content_type: application/zip
